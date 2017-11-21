@@ -80,6 +80,14 @@ namespace EcoRoofManager {
 	// Functions
 
 	void
+	GreenRoof_with_PlantCoverage(
+		int const SurfNum, // Indicator of Surface Number for the current surface
+		int const ZoneNum, // Indicator of the zone number for the current surface
+		int & ConstrNum, // Indicator for construction index for the current surface
+		Real64 & TempExt // Exterior temperature boundary condition
+	);
+
+	void
 	CalcEcoRoof(
 		int const SurfNum, // Indicator of Surface Number for the current surface
 		int const ZoneNum, // Indicator for zone number where the current surface

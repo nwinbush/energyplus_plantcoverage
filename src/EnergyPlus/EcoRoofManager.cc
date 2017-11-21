@@ -137,6 +137,38 @@ namespace EcoRoofManager {
 	// Functions
 
 	void
+	GreenRoof_with_PlantCoverage(
+		int const SurfNum, // Indicator of Surface Number for the current surface
+		int const ZoneNum, // Indicator of the zone number for the current surface
+		int & ConstrNum, // Indicator for construction index for the current surface
+		Real64 & TempExt // Exterior temperature boundary condition
+	)
+	{
+		// SUBROUTINE INFORMATION
+		//		AUTHOR          Neda Yaghoobian, University of Maryland, College Park
+		//		DATE WRITTEN    March 2014
+		//		MODIFIED        na
+		//		RE - ENGINEERED   na
+		// This subroutine takes into account plant coverage in simulating the green roof energy balance
+		// Reference: 1)TABARES - VELASCO, P.C. and SREBRIC, J., 2012. A heat transfer model for assessment
+		// of plant based roofing systems in summer conditions.Building and Environment, 49, pp. 310 - 323.
+		// 2)Yaghoobian, N. and Srebric, J., 2014. Influence of Green Roof Plant Coverage on
+		// the Total Roof Energy Balance and Building Energy Consumption.Applied Energy
+
+		// PURPOSE OF THIS SUBROUTINE :
+		// To find the area - averaged substrate surface temperature of the green roof
+		// to be used as the outside roof surface temperature in the building energy simulation
+
+		// METHODOLOGY EMPLOYED :
+		// The energy balance equations for plants, bare soil surface, and substrate surface under
+		// the plant layer are solved iteratively for their temperatures by Newton?s method.Then,
+		// using the plant coverage percentage the area - averaged soil surface temperature is calculated
+		// to be used as the roof surface temperature in the conduction calculation process(Conduction
+		// Transfer Functions; CTFs) of EnergyPlus, taking into account all layers of the roof construction.
+
+	}
+
+	void
 	CalcEcoRoof(
 		int const SurfNum, // Indicator of Surface Number for the current surface
 		int const ZoneNum, // Indicator for zone number where the current surface
@@ -150,7 +182,7 @@ namespace EcoRoofManager {
 		//     MODIFIED        David Sailor - to fix initialization between DD runs and during warm-up
 		//     RE-ENGINEERED   na
 
-		// PURPOSE OF THIS MODULE:
+		// PURPOSE OF THIS FUNCTION:
 
 		// To calculate the heat balance for surfaces with eco roof specified as outside surface
 		// Note that only ONE ecoroof construction can be employed at present time. If multiple
