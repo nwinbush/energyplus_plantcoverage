@@ -166,6 +166,31 @@ namespace EcoRoofManager {
 		// to be used as the roof surface temperature in the conduction calculation process(Conduction
 		// Transfer Functions; CTFs) of EnergyPlus, taking into account all layers of the roof construction.
 
+		using namespace DataGlobals;
+		using namespace DataEnvironment;
+		using namespace DataHeatBalFanSys;
+		using namespace DataHeatBalance;
+		using namespace DataHeatBalSurface;
+		using namespace DataSurfaces;
+		using namespace Psychrometrics;
+		using ConvectionCoefficients::InitExteriorConvectionCoeff;
+		using ConvectionCoefficients::SetExtConvectionCoeff;
+		using ConvectionCoefficients::SetIntConvectionCoeff;
+
+		// SUBROUTINE PARAMETER DEFINITIONS :
+
+		// Real64 const Ksw = 0.7d0         // SW extinction coefficient
+		// Real64 const Klw = 0.83d0        // LW extinction coefficient
+		Real64 const Cp_air(1005.0);     // Specific heat of air(j / kg.K)
+		// Real64 const VWC_fc = 0.33d0        // Substrate volumetric water content at field capacity
+		// Real64 const VWC_wp = 0.02d0        // Substrate volumetric water content at wilting point
+		Real64 const Le_num(1.0);			// Lewis number
+		Real64 const phi(0.85);				// Porosity
+		Real64 const k_air(0.0267);			// Thermal conductivity(W / m K) for air at 300 K(Mills 1999 Heat Transfer)
+		Real64 const k_plants(0.5);			// Plants Thermal Conducvity(W / m K)
+		Real64 const Rair(0.286);			// Gas Constant of air J / Kg K
+		Real64 const Sigma(5.6697e-8);		// Stefan - Boltzmann constant W / m ^ 2K ^ 4
+
 	}
 
 	void
