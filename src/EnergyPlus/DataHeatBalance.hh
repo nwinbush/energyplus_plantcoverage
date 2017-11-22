@@ -797,6 +797,11 @@ namespace DataHeatBalance {
 		int GlassSpecAngTransDataPtr; // Data set index of transmittance as a function of spectral and angle associated with a window glass material
 		int GlassSpecAngFRefleDataPtr; // Data set index of front reflectance as a function of spectral and angle associated with a window glass material
 		int GlassSpecAngBRefleDataPtr; // Data set index of back reflectance as a function of spectral and angle associated with a window glass material
+		Real64 PlantCoverage; // Plant coverage percentage
+		Real64 VWC_FieldCapacity; // Substrate volumetric water content at field capacity
+		Real64 SW_ExtCoeff; // Shortwave extinction coefficient
+		Real64 LW_ExtCoeff; // Longwave extinction coefficient
+
 
 		// Default Constructor
 		MaterialProperties() :
@@ -956,7 +961,11 @@ namespace DataHeatBalance {
 			GlassSpectralAndAngle( false ),
 			GlassSpecAngTransDataPtr( 0 ),
 			GlassSpecAngFRefleDataPtr( 0 ),
-			GlassSpecAngBRefleDataPtr( 0 )
+			GlassSpecAngBRefleDataPtr( 0 ),
+			PlantCoverage(0.0),
+			VWC_FieldCapacity(0.0),
+			SW_ExtCoeff(0.0),
+			LW_ExtCoeff(0.0)
 		{}
 
 	};
