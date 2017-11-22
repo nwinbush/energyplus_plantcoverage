@@ -191,6 +191,144 @@ namespace EcoRoofManager {
 		Real64 const Rair(0.286);			// Gas Constant of air J / Kg K
 		Real64 const Sigma(5.6697e-8);		// Stefan - Boltzmann constant W / m ^ 2K ^ 4
 
+		// SUBROUTINE LOCAL VARIABLE DECLARATIONS :
+		// LOGICAL::EcoRoofbeginFlag = .TRUE.
+		static bool MyEnvrnFlag(true);
+		static int FirstEcoSurf(0);     // Indicates lowest numbered surface that is an ecoroof
+		Real64 RS;                 // shortwave radiation
+		Real64 Latm;                  // Long Wave Radiation(W / m ^ 2)
+		Real64 Q_sol_abs_plants;      // Absorbed SW radiation by the plants
+		Real64 Mg;                  // Surface soil moisture content m ^ 3 / m ^ 3 (Moisture / MoistureMax)
+		static Real64 T_plant;             // Plant(leaf) temperature(K)
+		static Real64 T_soil;               // Soil surface temperature(K)
+		static Real64 T_bare_soil;    // Bare soil surface temperature(K)
+		// ***-------- -
+		// Real64 Tsoil_avg                  // Average soil temperature[K]
+		static Real64 Tsoil_avg;             // Average soil temperature[K]
+
+		static Real64 Tsoil_avg_Rep;
+		static Real64 T_plant_Rep;
+			static Real64 Qconv_p_Rep;
+			static Real64 Qconv_s_Rep;
+			static Real64 Qconv_bare_s_Rep;
+			static Real64 Qconv_s_avg_Rep;
+			static Real64 Q_ET_p_Rep;
+			static Real64 Q_E_s_Rep;
+			static Real64 Q_E_bare_s_Rep;
+			static Real64 Q_E_avg_Rep;
+			static Real64 Q_sol_soil_Rep;
+			static Real64 Q_sol_bare_s_Rep;
+			static Real64 Q_sol_s_avg_Rep;
+			static Real64 Q_IR_s_Rep;
+			static Real64 Q_IR_bare_s_Rep;
+			static Real64 Q_IR_s_avg_Rep;
+			static Real64 Qcond_avg_Rep;
+			// ***-------- -
+			Real64 i_fg;                  // Latent heat of vaporization(j / kg)
+			Real64 Pa;                    // Standard atmospheric pressure(Pa)
+			//  Real64 h_conv                // Convective heat transfer coeff
+			Real64 Ta;                    // current air temperature(C)
+			Real64 Tak;                   // current air temperature(K)
+			//  Real64 e_s                   // Saturation vapor pressure(kPa)
+			Real64 f_solar;               // Empirical multiplicative functions for solar irradiance role on stomatal aperture
+			 Real64 f_VWC;                 // Empirical multiplicative functions for Substrate Volumetric Water Content
+			 Real64 f_VPD;                 // Empirical multiplicative functions for vapor pressure deficit(VPD) role on stomatal
+			// aperture(VWC or Moisture) role on stomatal aperture
+			 Real64 h_por;                 // convective heat transfer for porous media(plants), W / m2 K
+			 Real64 k_por;                 // Porous media(plants) thermal conductivity, W / m K
+			 Real64 alpha_por;
+			 Real64 Pe;                    // Peclet number
+			 Real64 NU_por;                // Nusselt number for porous media
+			 Real64 Var_1, Var_2, Var_a, Var_b;
+
+			static Real64 LAI;                   // Leaf Area Index
+			static Real64 Alphag;                // Ground albedo
+			static Real64 Alphap;                // Plant albedo
+			static Real64 epsilong;              // Ground emisivity
+			static Real64 epsilonp;              // Plant emisivity
+			static Real64 Moisture;              // m ^ 3 / m^3.The moisture content in the soil is the value provided by a user
+			static Real64 MoistureResidual;      // m ^ 3 / m^3. Residual & maximum water contents are unique to each material.
+			static Real64 MoistureMax;           // Maximum volumetric moisture content(porosity) m ^ 3 / m ^ 3
+			static Real64 MeanRootMoisture;      // Mean value of root moisture m ^ 3 / m ^ 3
+			static Real64 SoilThickness;         // Soil thickness(m)
+			static Real64 StomatalResistanceMin; // s / m . // Minimum stomatal resistance is unique for each veg.type.
+			static Real64 sigma_f;               // Plant coverage
+
+			// ------------------------
+			Real64 tau_sw;
+			Real64 tau_lw;
+			Real64 EpsilonOne;
+			Real64 RH;
+			//  Real64 VFluxf
+			static Real64 Vfluxf(0.0);    // Water evapotr.rate associated with latent heat from vegetation[m / s]
+			//  Real64 VFluxg
+			static Real64 Vfluxg(0.0);  // Water evapotr.rate associated with latent heat from ground surface[m / s]
+				 //  Real64 Alphag_UnUsed
+			static Real64 Alphag_UnUsed = (0.3);      // Ground Albedo(From EcoRoof Model - Not used here)
+			Real64 WS;
+			Real64 Rhoa;
+			Real64 eair;
+			Real64 r_s_sub;
+			Real64 Q_sol_abs_soil;
+			Real64 Q_sol_abs_bare_soil;
+			Real64 F1temp;
+			Real64 Qsoilpart1;
+			Real64 Qsoilpart2;
+			// Real64 f_Hum
+			Real64 Tp_new;
+			Real64 Tp_old;
+			Real64 Q_IR_sky_p;
+			Real64 Q_IR_exch_p;
+			static Real64 Qconv_p;
+			Real64 r_a;
+			Real64 r_a_bare;
+			Real64 r_s;
+			static Real64 Q_ET_p;
+			Real64 Func_p;
+			Real64 Func_prim_p;
+			Real64 Ts_new;
+			Real64 Ts_bare_new;
+			Real64 Ts_old;
+			Real64 Ts_bare_old;
+			Real64 Q_IR_sky_s;
+			Real64 Q_IR_sky_bare_s;
+			Real64 Q_IR_exch_s;
+			static Real64 Qconv_s;
+			static Real64 Qconv_bare_s;
+			Real64 r_a_sub;
+			static Real64 Q_E_s;
+			static Real64 Q_E_bare_s;
+			static Real64 Q_E_avg;
+			Real64 Qcond_s;
+			Real64 Qcond_bare_s;
+			Real64 Func_s;
+			Real64 Func_bare_s;
+			Real64 Q_E_S_prim;
+			Real64 Q_E_bare_s_prim;
+			Real64 Func_prim_s;
+			Real64 Func_prim_bare_s;
+			Real64 i_fg_p;          // Latent heat of vaporation at leaf surface temperature(J / kg)
+			Real64 i_fg_g;          // Latent heat of vaporization  at the ground temperature(J / kg)
+			int RoughSurf;       // Roughness index of the exterior surface.
+			Real64 AbsThermSurf;    // Thermal absoptance of the exterior surface
+			Real64 HMovInsul;       // "Convection" coefficient of movable insulation
+			static Real64 VWC_fc;          // Substrate volumetric water content at field capacity
+			static Real64 VWC_wp;          // Substrate volumetric water content at wilting point
+			static Real64 Ksw;             // SW extinction coefficient
+			static Real64 Klw;            // LW extinction coefficient
+
+			Real64 length;
+			int unit(0);
+			Real64 Qsoil(0.0);          // heat flux from the soil layer
+			Real64 NTest1, NTest2, NTest3, NTest4, NTest5, NTest6;
+			int i;
+			int iter1, iter2, iter3, iter_Mid;
+			Real64 Solution1[500], Solution2[500], Solution3[500];
+			Real64 Func1[500], Func2[500], Func3[500];
+			Real64 MidPoint;
+			Real64 Func_MidPoint;
+			Real64 Func_1, Func_2, Sol_1, Sol_2;
+
 	}
 
 	void
@@ -255,8 +393,8 @@ namespace EcoRoofManager {
 		Real64 AbsThermSurf; // Thermal absoptance of the exterior surface
 		int RoughSurf; // Roughness index of the exterior (ecoroof) surface.
 		Real64 HMovInsul; // "Convection" coefficient of movable insulation
-		//  REAL(r64)    :: HSky                ! "Convection" coefficient from sky to surface
-		//  REAL(r64)    :: HAir                ! "Convection" coefficient from air to surface (radiation)
+		//  Real64    :: HSky                ! "Convection" coefficient from sky to surface
+		//  Real64    :: HAir                ! "Convection" coefficient from air to surface (radiation)
 		//  INTEGER :: OPtr
 		//  INTEGER :: OSCScheduleIndex    ! Index number for OSC ConstTempSurfaceName
 
@@ -302,7 +440,7 @@ namespace EcoRoofManager {
 		static Real64 Qsoil( 0.0 ); // heat flux from the soil layer
 
 		Real64 EpsilonOne;
-		//unused1208  REAL(r64) :: e
+		//unused1208  Real64  e
 		Real64 eair;
 		Real64 Rhoa;
 		Real64 Tak;
