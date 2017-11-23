@@ -405,6 +405,514 @@ namespace EcoRoofManager {
 				// ***------------------
 			}
 
+			// DJS July 2007
+			// Make sure the ecoroof module resets its conditions at start of EVERY warmup day and every new design day
+			// for Reverse DD testing
+			if (BeginEnvrnFlag || WarmupFlag) {
+				Moisture = Material(Construct(ConstrNum).LayerPoint(1)).InitMoisture;   // Initial moisture content in soil
+				MeanRootMoisture = Moisture;  // Start the root zone moisture at the same value as the surface.
+				Alphag = 1.0 - Material(Construct(ConstrNum).LayerPoint(1)).AbsorpSolar; // albedo rather than absorptivity
+			}
+			
+			// DJS July 2007
+
+
+			if (BeginEnvrnFlag && MyEnvrnFlag) {
+				T_soil = OutDryBulbTempAt(Surface(SurfNum).Centroid.z) + KelvinConv;       // OutDrybulbTemp           // initial guess
+				T_plant = OutDryBulbTempAt(Surface(SurfNum).Centroid.z) + KelvinConv;       // OutDrybulbTemp           // initial guess
+				T_bare_soil = OutDryBulbTempAt(Surface(SurfNum).Centroid.z) + KelvinConv;   // OutDrybulbTemp           // initial guess
+				Vfluxf = 0.0;
+				Vfluxg = 0.0;
+				CumRunoff = 0.0;
+				CumET = 0.0;
+				CumPrecip = 0.0;
+				CumIrrigation = 0.0;
+				CurrentRunoff = 0.0;
+				CurrentET = 0.0;
+				CurrentPrecipitation = 0.0;
+				CurrentIrrigation = 0.0;
+				MyEnvrnFlag = false;
+			}
+
+
+			if (!BeginEnvrnFlag) {
+				MyEnvrnFlag = true;
+			}
+
+			// Shortwave and logwave transmittance of a canopy :
+			tau_sw = std::exp(-Ksw*LAI);
+			tau_lw = std::exp(-Klw*LAI);
+
+			// Denominator in LW exchange between plants & soil surface :
+			EpsilonOne = epsilonp + epsilong - epsilong * epsilonp;
+
+			// Relative humidity = Current outdoor relative humidity[%]
+			RH = OutRelHum; // Get humidity in % from the DataEnvironment.f90
+
+
+			// From EcoRoof : If current surface is = FirstEcoSurf then for this time step we need to update the soil moisture
+			// 'FirstEcoSurf' gets its value when 'EcoRoofbeginFlag' is TRUE(first entry into ecoroof routines)
+
+			if (SurfNum == FirstEcoSurf) {
+				//----NOTE : unit, T_soil, T_plant, Qsoil are unused in 'UpdateSoilProps' subroutine.
+				UpdateSoilProps(Moisture, MeanRootMoisture, MoistureMax, MoistureResidual, SoilThickness, Vfluxf, Vfluxg,
+					ConstrNum, Alphag_UnUsed, unit, T_soil, T_plant, Qsoil);
+			}
+				
+			// Soil albedo
+			Mg = Moisture / MoistureMax;
+			Alphag = 0.2171*std::pow(Mg, 2) - 0.4336*Mg + 0.3143;
+
+			WS = WindSpeedAt(Surface(SurfNum).Centroid.z);        // Windspeed at Z of roof
+			Ta = OutDryBulbTempAt(Surface(SurfNum).Centroid.z);   // Temperature outdoor - Surface is dry, use normal correlation
+			Tak = Ta + KelvinConv;
+			Pa = StdBaroPress;                                 // standard atmospheric pressure(apparently in Pascals)
+			Rhoa = Pa / (Rair*Tak);                                 // Density of air.kg / m ^ 3
+
+			// eair
+			eair = (RH / 100.0)*e_s(Tak);
+
+			// r_s_sub
+			r_s_sub = 34.52*std::pow(Mg, -3.2678);
+
+			// Absorbed shortwave radiation
+			Q_sol_abs_plants = (1.0 - Alphap - tau_sw)*(1.0 + tau_sw*Alphag)*RS;      // by the plants
+			Q_sol_abs_soil = tau_sw*(1.0 - Alphag)*RS;                           // by the soil surface - Covered by plants
+			Q_sol_abs_bare_soil = (1.0 - Alphag)*RS;                               // by the bare soil surface
+
+			// f_solar
+			f_solar = 1.0 + std::exp(-0.034*(RS - 3.5));
+
+			// f_VWC
+			if (Moisture > 0.7*VWC_fc) {
+				f_VWC = 1.0;
+			}else{
+				f_VWC = max(0.0, 1.0 / ((Moisture - VWC_wp) / (0.7*VWC_fc - VWC_wp)));
+			}
+					
+			if(Moisture < VWC_wp){
+				f_VWC = 1000.0;
+			}
+
+			// h_por
+			k_por = phi*k_air + (1.0 - phi)*k_plants;  // Porous media thermal conductivity
+			alpha_por = k_por / (Rhoa*Cp_air);
+			Pe = 0.3*WS*length / alpha_por;       // Peclet number
+			NU_por = 1.128*std::pow(Pe,0.5);      // Nusselt number for porous media
+			h_por = NU_por*k_por / length;
+
+
+			// Conduction based on EcoRoof subroutine
+			if (Construct(ConstrNum).CTFCross(0) > 0.01) {
+				F1temp = Construct(ConstrNum).CTFCross(0) / (Construct(ConstrNum).CTFInside(0) + HConvIn(SurfNum));
+				Qsoilpart1 = -CTFConstOutPart(SurfNum) + F1temp*(CTFConstInPart(SurfNum) + QRadSWInAbs(SurfNum)
+					+ QRadThermInAbs(SurfNum) + Construct(ConstrNum).CTFSourceIn(0)*QsrcHist(SurfNum, 1)
+					+ HConvIn(SurfNum)*MAT(ZoneNum) + NetLWRadToSurf(SurfNum));
+			}
+			else {
+				Qsoilpart1 = -CTFConstOutPart(SurfNum) + Construct(ConstrNum).CTFCross(0)*TempSurfIn(SurfNum);
+				F1temp = 0.0;
+			}
+
+			Qsoilpart2 = Construct(ConstrNum).CTFOutside(0) - F1temp*Construct(ConstrNum).CTFCross(0);
+
+
+
+			// Beginning Newton's Methods for itteration
+
+//------------ Newton's method for solving T_plant ---------------------
+			if (sigma_f != 0.0) {
+				Tp_new = T_plant;
+				Tp_old = Tp_new + 999.0;
+				iter1 = 0;
+				while (abs(Tp_new - Tp_old) > 0.0001) {
+					iter1 = iter1 + 1;
+					Tp_old = Tp_new;
+
+					// Assuming that the sky emissivity is equal to the plant emissivity
+					Q_IR_sky_p = (1.0 - tau_lw)*epsilonp*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4) - std::pow(Tp_old, 4)
+						- (1.0 - epsilonp)*Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4));
+					Q_IR_exch_p = (1.0 - tau_lw)*Sigma*epsilonp*epsilong*(std::pow(T_soil, 4) - std::pow(Tp_old, 4)) / EpsilonOne;
+					Qconv_p = LAI*h_conv(SurfNum, Tak, Tp_old, WS, k_air)*(Tp_old - Tak);
+					r_a = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv(SurfNum, Tak, Tp_old, WS, k_air);  // Aerodynamic resistance to mass transfer, s / m
+					r_s = (StomatalResistanceMin / LAI)*f_solar*f_hum(Tp_old, eair)*f_VWC*f_temp(Tp_old);
+					Q_ET_p = (LAI*Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa))*(e_s(Tp_old) - eair) / (r_s + r_a);
+
+
+					Func_p = Q_sol_abs_plants + Q_IR_sky_p + Q_IR_exch_p - Qconv_p - Q_ET_p;
+
+					Var_1 = exp(17.270*(Tp_old - KelvinConv) / ((Tp_old - KelvinConv) + 237.30));
+					Var_2 = 0.00160*std::pow(35.00 - Tp_old + KelvinConv, 2) - 1.00;
+					Var_a = (LAI*Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa));
+					Var_b = (StomatalResistanceMin / LAI)*f_solar*f_Hum(Tp_old, eair)*f_VWC;
+
+					Func_prim_p = -4.00*(1.0 - tau_lw)*epsilonp*Sigma*std::pow(Tp_old, 3)
+						- 4.0*(1 - tau_lw)*Sigma*epsilonp*epsilong*std::pow(Tp_old, 3) / EpsilonOne
+						- LAI*h_conv(SurfNum, Tak, Tp_old, WS, k_air)
+						- Var_a*0.6108*Var_1*(17.27 / (Tp_old - KelvinConv + 237.3)
+							- 17.27*(Tp_old - KelvinConv) / std::pow(Tp_old - KelvinConv + 237.3, 2) / (r_a + Var_b / std::abs(Var_2)))
+						+ Var_a*Var_b*0.0016*sign(Var_2, 1.0)*(eair - 0.6108*Var_1)*(2.0*35.0 - 2.0*Tp_old
+							+ 2.0*KelvinConv) / std::pow(std::abs(Var_2), 2) * (r_a + Var_b / std::pow(std::abs(Var_2), 2));
+
+					Tp_new = Tp_old - Func_p / Func_prim_p;
+
+					Solution1[iter1] = Tp_old;
+					Func1[iter1] = Func_p;
+					MidPoint = 0.5*(Solution1[iter1] + Solution1[iter1 - 1]);
+					if (iter1 >= 100) {   // Means if Newton's Method entered an infinite loop use Bisection method instead
+						if (((Func1[iter1] < 0.0) && (Func1[iter1 - 1] > 0.0)) || (Func1[iter1] > 0.0 && (Func1[iter1 - 1] < 0.0))) {
+
+							// Bisection Method :
+							iter_Mid = 0;
+							while (std::abs(Tp_new - MidPoint) > 0.0001) {
+								iter_Mid = iter_Mid + 1;
+
+								if (iter_Mid == 1) {
+									Func_1 = Func1[iter1];
+									Func_2 = Func1[iter1 - 1];
+									Sol_1 = Solution1[iter1];
+									Sol_2 = Solution1[iter1 - 1];
+								}
+								if (iter_Mid > 1) MidPoint = Tp_new;
+
+								// Assuming that the sky emissivity is equal to the plant emissivity
+								Q_IR_sky_p = (1.0 - tau_lw)*epsilonp*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4) -
+									std::pow(MidPoint, 4) - (1.0 - epsilonp)*Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4));
+								Q_IR_exch_p = (1.0 - tau_lw)*Sigma*epsilonp*epsilong*(std::pow(T_soil, 4) - std::pow(MidPoint, 4)) / EpsilonOne;
+								Qconv_p = LAI*h_conv(SurfNum, Tak, MidPoint, WS, k_air)*(MidPoint - Tak);
+								r_a = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv(SurfNum, Tak, MidPoint, WS, k_air);
+								r_s = (StomatalResistanceMin / LAI)*f_solar*f_Hum(MidPoint, eair)*f_VWC*f_temp(MidPoint);
+								Q_ET_p = (LAI*Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa))*(e_s(MidPoint) - eair) / (r_s + r_a);
+								Func_MidPoint = Q_sol_abs_plants + Q_IR_sky_p + Q_IR_exch_p - Qconv_p - Q_ET_p;
+
+								if (((Func_MidPoint < 0.0) && (Func_1 > 0.0)) || ((Func_MidPoint > 0.0) && (Func_1 < 0.0))) {
+									Tp_new = 0.50*(MidPoint + Sol_1);
+									Func_2 = Func_MidPoint;
+									Sol_2 = MidPoint;
+								}
+								else if (((Func_MidPoint < 0.0) && (Func_2 > 0.0)) || ((Func_MidPoint > 0.0) && (Func_2 < 0.0))) {
+									Tp_new = 0.50*(MidPoint + Sol_2);
+									Func_1 = Func_MidPoint;
+									Sol_1 = MidPoint;
+								}
+							}
+							goto Newt_1;
+						}
+						else {
+							goto Newt_1;
+						}
+					}
+				}
+
+			Newt_1:    
+				T_plant = Tp_new;
+				r_a = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv(SurfNum, Tak, T_plant, WS, k_air);
+				r_s = (StomatalResistanceMin / LAI)*f_solar*f_Hum(T_plant, eair)*f_VWC*f_temp(T_plant);
+				Q_ET_p = (LAI*Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa))*(e_s(T_plant) - eair) / (r_s + r_a);
+				Q_ET_p_Rep = (LAI*Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa))*(e_s(T_plant) - eair) / (r_s + r_a);
+				Qconv_p_Rep = LAI*h_conv(SurfNum, Tak, T_plant, WS, k_air)*(T_plant - Tak);
+			}
+			
+//--------- Newton's method for solving T_soil covered by plants--------------------
+			if (sigma_f != 0.0) {
+				Ts_new = T_soil;
+				Ts_old = Ts_new + 999.0;
+				iter2 = 0;
+				while (std::abs(Ts_new - Ts_old) > 0.00010) {
+					iter2 = iter2 + 1;
+					Ts_old = Ts_new;
+
+					// Assuming that the sky emissivity is equal to the soil emissivity
+					Q_IR_sky_s = tau_lw*epsilong*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4) - std::pow(Ts_old, 4) -
+						(1.0 - epsilong)*Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4));
+					Q_IR_exch_s = (1 - tau_lw)*Sigma*epsilonp*epsilong*(std::pow(T_plant, 4) - std::pow(Ts_old, 4)) / EpsilonOne;
+					Qconv_s = (h_por*h_conv(SurfNum, Tak, T_plant, WS, k_air) / (h_por + h_conv(SurfNum, Tak, T_plant, WS, k_air)))*(Ts_old - Tak);
+
+					r_a_sub = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0))*(1.0 / h_por + 1.0 / h_conv(SurfNum, Tak, T_plant, WS, k_air));
+					Q_E_s = max(0.0, Rhoa*Cp_air / gamma_s(Ts_old, Cp_air, Pa)*(e_s(Ts_old) - eair) / (r_s_sub + r_a_sub));
+
+					Qcond_s = -Qsoilpart1 + Qsoilpart2*(sigma_f*(Ts_old - KelvinConv) + (1.0 - sigma_f)*(T_bare_soil - KelvinConv));
+
+					Func_s = Q_sol_abs_soil + Q_IR_sky_s + Q_IR_exch_s - Qconv_s - Q_E_s - Qcond_s;
+
+					if (Q_E_s == 0.0) {
+						Q_E_S_prim = 0.0;
+					}
+					else {
+						Q_E_S_prim = ((Rhoa*Cp_air / (r_s_sub + r_a_sub))*0.61080*0.6220*std::pow(1000.00, 2) * std::exp(-(17.270*(KelvinConv - Ts_old))
+							/ (Ts_old - KelvinConv + 237.30))*(17.270 / (Ts_old - KelvinConv + 237.30) + (17.270*(KelvinConv -
+								Ts_old)) / std::pow((Ts_old - KelvinConv + 237.30), 2))*(2501.10 - (-2.37930)*(KelvinConv - Ts_old))) /
+								(Cp_air*Pa) - ((Rhoa*Cp_air / (r_s_sub + r_a_sub))*0.6220*(-2.37930)*std::pow(1000.00, 2) * (eair - 0.61080*
+									std::exp(-(17.270*(KelvinConv - Ts_old)) / (Ts_old - KelvinConv + 237.30)))) / (Cp_air*Pa);
+					}
+					Func_prim_s = -4.00 * Sigma * std::pow(Ts_old, 3) * epsilong*tau_lw
+						+ (4.00*Sigma*std::pow(Ts_old, 3) * epsilong * epsilonp * (tau_lw - 1.00)) / EpsilonOne
+						- (h_conv(SurfNum, Tak, T_plant, WS, k_air) * h_por) / (h_conv(SurfNum, Tak, T_plant, WS, k_air) + h_por)
+						- Q_E_S_prim - Qsoilpart2 * sigma_f;
+
+					Ts_new = Ts_old - Func_s / Func_prim_s;
+
+					Solution2[iter2] = Ts_old;
+					Func2[iter2] = Func_s;
+					MidPoint = 0.50*(Solution2[iter2] + Solution2[iter2 - 1]);
+					if (iter2 >= 100) {  //Means if Newton's Method entered an infinite loop use Bisection method instead
+						if (((Func2[iter2] < 0.0) && (Func2[iter2 - 1] > 0.0)) || ((Func2[iter2] > 0.0) && (Func2[iter2 - 1] < 0.0))) {
+							// Bisection Method :
+							iter_Mid = 0;
+							while (std::abs(Ts_new - MidPoint) > 0.00010) {
+								iter_Mid = iter_Mid + 1;
+
+								if (iter_Mid == 1) {
+									Func_1 = Func2[iter2];
+									Func_2 = Func2[iter2 - 1];
+									Sol_1 = Solution2[iter2];
+									Sol_2 = Solution2[iter2 - 1];
+								}
+								if (iter_Mid > 1) MidPoint = Ts_new;
+
+
+								// Assuming that the sky emissivity is equal to the soil emissivity
+								Q_IR_sky_s = tau_lw*epsilong*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4) - std::pow(MidPoint, 4) -
+									(1.0 - epsilong)*Surface(SurfNum).ViewFactorSky*std::pow(SkyTempKelvin, 4));
+								Q_IR_exch_s = (1 - tau_lw)*Sigma*epsilonp*epsilong*(std::pow(T_plant, 4) - std::pow(MidPoint, 4)) / EpsilonOne;
+								Qconv_s = (h_por*h_conv(SurfNum, Tak, T_plant, WS, k_air) / (h_por + h_conv(SurfNum, Tak, T_plant, WS, k_air)))*(MidPoint - Tak);
+								r_a_sub = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0))*(1.0 / h_por + 1.0 / h_conv(SurfNum, Tak, T_plant, WS, k_air));
+								Q_E_s = max(0.0, Rhoa*Cp_air / gamma_s(MidPoint, Cp_air, Pa)*(e_s(MidPoint) - eair) / (r_s_sub + r_a_sub));
+								Qcond_s = -Qsoilpart1 + Qsoilpart2*(sigma_f*(MidPoint - KelvinConv) + (1.0 - sigma_f)*(T_bare_soil - KelvinConv));
+								Func_MidPoint = Q_sol_abs_soil + Q_IR_sky_s + Q_IR_exch_s - Qconv_s - Q_E_s - Qcond_s;
+
+								if (((Func_MidPoint < 0.0) && (Func_1 > 0.0)) || ((Func_MidPoint > 0.0) && (Func_1 < 0.0))) {
+									Ts_new = 0.50*(MidPoint + Sol_1);
+									Func_2 = Func_MidPoint;
+									Sol_2 = MidPoint;
+								}
+								else if (((Func_MidPoint < 0.0) && (Func_2 > 0.0)) || ((Func_MidPoint > 0.0) && (Func_2 < 0.0))) {
+									Ts_new = 0.50*(MidPoint + Sol_2);
+									Func_1 = Func_MidPoint;
+									Sol_1 = MidPoint;
+								}
+							}
+							goto Newt_2;
+						}
+						else {
+							goto Newt_2;
+						}
+					}
+				}
+			Newt_2:
+				T_soil = Ts_new;
+				Q_E_s = max(0.0, Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa)*(e_s(T_soil) - eair) / (r_s_sub + r_a_sub));
+				Q_E_s_Rep = max(0.0, Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa)*(e_s(T_soil) - eair) / (r_s_sub + r_a_sub));
+				Qconv_s_Rep = (h_por*h_conv(SurfNum, Tak, T_plant, WS, k_air) / (h_por + h_conv(SurfNum, Tak, T_plant, WS, k_air)))*(T_soil - Tak);
+				Q_sol_soil_Rep = tau_sw*(1.0 - Alphag)*RS;
+				Q_IR_s_Rep = tau_lw*epsilong*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4) - std::pow(T_soil, 4) -
+					(1.0 - epsilong)*Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4)) +
+					(1 - tau_lw)*Sigma*epsilonp*epsilong*(std::pow(T_plant, 4) - std::pow(T_soil, 4)) / EpsilonOne;
+			}
+				
+//--------- Newton's method for solving T_bare_soil
+			if (sigma_f != 1.0) {
+				Ts_bare_new = T_bare_soil;
+				Ts_bare_old = Ts_bare_new + 999.0;
+
+				iter3 = 0;
+				while (std::abs(Ts_bare_new - Ts_bare_old) > 0.00010) {
+					iter3 = iter3 + 1;
+
+					Ts_bare_old = Ts_bare_new;
+					// Assuming that the sky emissivity is equal to the bare soil emissivity
+					Q_IR_sky_bare_s = epsilong*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4) - std::pow(Ts_bare_old, 4) -
+						(1.0 - epsilong)*Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4));
+					Qconv_bare_s = h_conv_bare(SurfNum, Tak, Ts_bare_old, WS, k_air)*(Ts_bare_old - Tak);
+					r_a_bare = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv_bare(SurfNum, Tak, Ts_bare_old, WS, k_air);
+					Q_E_bare_s = Rhoa*Cp_air / gamma_s(Ts_bare_old, Cp_air, Pa)*(e_s(Ts_bare_old) - eair) / (r_s_sub + r_a_bare);
+					Qcond_bare_s = -Qsoilpart1 + Qsoilpart2*(sigma_f*(T_soil - KelvinConv) + (1.0 - sigma_f)*(Ts_bare_old - KelvinConv));
+
+
+					Func_bare_s = Q_sol_abs_bare_soil + Q_IR_sky_bare_s - Qconv_bare_s - Q_E_bare_s - Qcond_bare_s;
+
+
+					Q_E_bare_s_prim = ((Rhoa*Cp_air / (r_s_sub + r_a_bare))*0.61080*0.6220*std::pow(1000.0, 2) * std::exp(-(17.270*(KelvinConv - Ts_bare_old))
+						/ (Ts_bare_old - KelvinConv + 237.30))*(17.270 / (Ts_bare_old - KelvinConv + 237.30) + (17.270*(KelvinConv -
+							Ts_bare_old)) / std::pow((Ts_bare_old - KelvinConv + 237.30), 2))*(2501.10 - (-2.37930)*(KelvinConv - Ts_bare_old))) /
+							(Cp_air*Pa) - ((Rhoa*Cp_air / (r_s_sub + r_a_bare))*0.6220*(-2.37930)*std::pow(1000.0, 2) * (eair - 0.61080*
+								exp(-(17.270*(KelvinConv - Ts_bare_old)) / (Ts_bare_old - KelvinConv + 237.30)))) / (Cp_air*Pa);
+
+					Func_prim_bare_s = -4.00*Sigma*std::pow(Ts_bare_old, 3) * epsilong
+						- h_conv_bare(SurfNum, Tak, Ts_bare_old, WS, k_air)
+						- Q_E_bare_s_prim
+						- Qsoilpart2 * (1.0 - sigma_f);
+
+					Ts_bare_new = Ts_bare_old - Func_bare_s / Func_prim_bare_s;
+
+
+					Solution3[iter3] = Ts_bare_old;
+					Func3[iter3] = Func_bare_s;
+					MidPoint = 0.50*(Solution3[iter3] + Solution3[iter3 - 1]);
+					if (iter3 >= 100) {   // Means if Newton's Method entered an infinite loop use Bisection method instead
+						if (((Func3[iter3] < 0.0) && (Func3[iter3 - 1] > 0.0)) || ((Func3[iter3] > 0.0) && (Func3[iter3 - 1] < 0.0))) {
+							// Bisection Method :
+							iter_Mid = 0;
+							while (std::abs(Ts_bare_new - MidPoint) > 0.00010) {
+								iter_Mid = iter_Mid + 1;
+
+								if (iter_Mid == 1) {
+									Func_1 = Func3[iter3];
+									Func_2 = Func3[iter3 - 1];
+									Sol_1 = Solution3[iter3];
+									Sol_2 = Solution3[iter3 - 1];
+								}
+								if (iter_Mid > 1) MidPoint = Ts_bare_new;
+
+
+								// Assuming that the sky emissivity is equal to the bare soil emissivity
+								Q_IR_sky_bare_s = epsilong*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4) - std::pow(MidPoint, 4) -
+									(1.0 - epsilong)*Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4));
+								Qconv_bare_s = h_conv_bare(SurfNum, Tak, MidPoint, WS, k_air)*(MidPoint - Tak);
+								r_a_bare = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv_bare(SurfNum, Tak, MidPoint, WS, k_air);
+								Q_E_bare_s = Rhoa*Cp_air / gamma_s(MidPoint, Cp_air, Pa)*(e_s(MidPoint) - eair) / (r_s_sub + r_a_bare);
+								Qcond_bare_s = -Qsoilpart1 + Qsoilpart2*(sigma_f*(T_soil - KelvinConv) + (1.0 - sigma_f)*(MidPoint - KelvinConv));
+								Func_MidPoint = Q_sol_abs_bare_soil + Q_IR_sky_bare_s - Qconv_bare_s - Q_E_bare_s - Qcond_bare_s;
+								if (((Func_MidPoint < 0.0) && (Func_1 > 0.0)) || ((Func_MidPoint > 0.0) && (Func_1 < 0.0))) {
+									Ts_bare_new = 0.50*(MidPoint + Sol_1);
+									Func_2 = Func_MidPoint;
+									Sol_2 = MidPoint;
+								}
+								else if (((Func_MidPoint < 0.0) && (Func_2 > 0.0)) || ((Func_MidPoint > 0.0) && (Func_2 < 0.0))) {
+									Ts_bare_new = 0.50*(MidPoint + Sol_2);
+									Func_1 = Func_MidPoint;
+									Sol_1 = MidPoint;
+								}
+							}
+							goto Newt_3;
+						}
+						else {
+							goto Newt_3;
+						}
+					}
+				}
+
+			Newt_3:
+				T_bare_soil = Ts_bare_new;
+				r_a_bare = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv_bare(SurfNum, Tak, T_bare_soil, WS, k_air);
+				Q_E_bare_s = Rhoa*Cp_air / gamma_s(T_bare_soil, Cp_air, Pa)*(e_s(T_bare_soil) - eair) / (r_s_sub + r_a_bare);
+				Q_E_bare_s_Rep = Rhoa*Cp_air / gamma_s(T_bare_soil, Cp_air, Pa)*(e_s(T_bare_soil) - eair) / (r_s_sub + r_a_bare);
+				Qconv_bare_s_Rep = h_conv_bare(SurfNum, Tak, T_bare_soil, WS, k_air)*(T_bare_soil - Tak);
+				Q_sol_bare_s_Rep = (1.0 - Alphag)*RS;
+				Q_IR_bare_s_Rep = epsilong*Sigma*(Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4) - std::pow(T_bare_soil, 4) -
+					(1.0 - epsilong)*Surface(SurfNum).ViewFactorSky*std::pow((SkyTempKelvin), 4));
+			}
+			// Average soil temperature
+			Tsoil_avg = sigma_f*T_soil + (1.0 - sigma_f)*T_bare_soil;
+
+
+			// From EcoRoof
+			// Note: 'Q_ET_p' & 'i_fg_p' are used in places of 'Lf' & 'Lef' and are coming from equations of GreenRoof(Not EcoRoof)
+			// It is the same for the soil parameters.
+			// Note : Since 'Q_ET_p' and 'Q_E_s' have reverse signs than those in the EcoRoof model, '-1.0*' is omitted from the Vfluxf / g
+			// equations of EcoRoof.
+
+			i_fg_p = (-2.37930*(T_plant - KelvinConv) + 2501.10)*1000.0;  // [j / kg]
+			//Check to see if ice is sublimating or frost is forming.
+			if ((T_plant - KelvinConv) < 0.0) i_fg_p = 2.8386;   // per FASST documentation p.15 after eqn. 37.
+
+			i_fg_g = (-2.37930*(Tsoil_avg - KelvinConv) + 2501.10)*1000.0;  // [j / kg]
+			// Check to see if ice is sublimating or frost is forming.
+			if ((Tsoil_avg - KelvinConv) < 0.0) i_fg_g = 2.8386;   // per FASST documentation p.15 after eqn. 37.
+
+			if (sigma_f == 0.0) {
+				Vfluxf = 0.0;
+			}
+			else {
+				Vfluxf = Q_ET_p / i_fg_p / 990.00;             // water evapotranspire rate[m / s]
+			}
+			Q_E_avg = sigma_f*Q_E_s + (1.0 - sigma_f)*Q_E_bare_s;
+			Vfluxg = Q_E_avg / i_fg_g / 990.00;               // water evapotranspire rate[m / s]
+			if (Vfluxf < 0.0) Vfluxf = 0.0;       // According to FASST Veg.Models p. 11, eqn 26 - 27, if Qfsat > qaf the actual
+			if (Vfluxg < 0.0) Vfluxg = 0.0;      // evaporative fluxes should be set to zero(delta_c = 1 or 0).
+
+								//ENDIF
+
+//----------------------------------------------------------------------
+
+			TempExt = Tsoil_avg - KelvinConv;
+			TH(SurfNum, 1, 1) = Tsoil_avg - KelvinConv;
+
+			Tsoil_avg_Rep = Tsoil_avg - KelvinConv;
+			Qconv_s_avg_Rep = sigma_f*Qconv_s_Rep + (1.0 - sigma_f)*Qconv_bare_s_Rep;
+			Q_E_avg_Rep = sigma_f*Q_E_s_Rep + (1.0 - sigma_f)*Q_E_bare_s_Rep;
+			Q_sol_s_avg_Rep = sigma_f*Q_sol_soil_Rep + (1.0 - sigma_f)*Q_sol_bare_s_Rep;
+			Q_IR_s_avg_Rep = sigma_f*Q_IR_s_Rep + (1.0 - sigma_f)*Q_IR_bare_s_Rep;
+			Qcond_avg_Rep = -Qsoilpart1 + Qsoilpart2*(sigma_f*(T_soil - KelvinConv) + (1.0 - sigma_f)*(T_bare_soil - KelvinConv));
+
+			if (sigma_f != 0.0) {
+				T_plant_Rep = T_plant - KelvinConv;
+				Qconv_p_Rep = Qconv_p_Rep;
+				Q_ET_p_Rep = Q_ET_p_Rep;
+			} else {
+				T_plant_Rep = 0.0;
+				Qconv_p_Rep = 0.0;
+				Q_ET_p_Rep = 0.0;
+			}
+	}
+
+	Real64
+		h_conv(
+			int const SurfNum, // Indicator of Surface number for the current surface
+			Real64 const Tair_k, // Air temperature
+			Real64 const plant_temp, // Plant temperature
+			Real64 const WindSpeed, // Wind speed
+			Real64 const k_air1 // 
+	){
+		// This function returns the convective heat transfer coefficient for plants
+
+		Real64 const nu_air(15.66e-6);
+		Real64 const Pr_air(0.71);
+		Real64 Re;	// Reynolds number
+		Real64 Gr;	// Grashof number
+		Real64 Pr;	// Prandtl number
+		Real64 Tavg;	// Average air temperature within the plant canopy
+		Real64 Beta;	// Volumetric thermal expansion coefficient (assuming ideal gas)
+		Real64 L_cha;	// Characteristic length based on the green roof dimensions
+		Real64 Nu;	// Nusselt number
+		Real64 length;
+		Real64 wide;
+		Real64 Norm;
+		Real64 Lmixed;
+		Real64 hConv;
+
+		length = std::sqrt(Surface(SurfNum).Area);
+		wide = length;
+		Tavg = 0.5*(Tair_k + plant_temp);
+		Beta = 1.00 / Tavg;
+		L_cha = length*wide / (2 * length + 2 * wide);
+
+		Gr = std::abs(9.810*Beta*(plant_temp - Tair_k)*std::pow(L_cha, 3) / std::pow(nu_air, 2));
+		Re = WindSpeed*length / nu_air;
+
+		// Forced convection
+		if (Gr < 0.0680*std::pow(Re, 2.2)) {
+			Nu = 3.00 + 1.250*0.02530*std::pow(Re, 0.80);
+			hConv = 3.0*Nu*k_air1 / length;
+		}
+
+		// Mixed convection
+		if (Gr > 0.0680*std::pow(Re, 2.2) && Gr < 55.3*std::pow(Re, (5.0 / 3.0))) {
+			Nu = 2.70*std::pow((Gr / std::pow(Re, 2.20)), (1.0 / 3.0))*(3.0*15.0 / 4.0 + 0.02530*15.0 / 16.0*std::pow(Re, 0.80));
+			Norm = (Gr / std::pow(Re, (5.0 / 3.0))) / 60.0;
+			Lmixed = (L_cha*Norm + length*(1.0 - Norm));
+			hConv = 3.0*Nu*k_air1 / Lmixed;
+		}
+
+		// Natural convection
+		if (Gr > 55.30*std::pow(Re, (5.0 / 3.0))) {
+			Nu = 0.150*std::pow((Gr*Pr_air), (1.0 / 3.0));
+			hConv = 3.0*Nu*k_air1 / L_cha;
+		}
+
+		return hConv;
+
+
 	}
 
 	void

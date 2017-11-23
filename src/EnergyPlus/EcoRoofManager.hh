@@ -112,6 +112,15 @@ namespace EcoRoofManager {
 		Real64 const Qsoil // unused1208
 	);
 
+	Real64
+	h_conv(
+		int const SurfNum,
+		Real64 const Tair_k,
+		Real64 const plant_temp,
+		Real64 const WindSpeed,
+		Real64 const k_air1
+	);
+
 } // EcoRoofManager
 
 } // EnergyPlus
