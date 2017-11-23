@@ -915,6 +915,63 @@ namespace EcoRoofManager {
 
 	}
 
+	// This function calculates the convective heat transfer coefficient for bare soil
+	Real64
+	h_conv_bare(
+		int const SurfNum,
+		Real64 const Tair_k,
+		Real64 const BareSoil_temp,
+		Real64 const WindSpeed,
+		Real64 const k_air1
+	)
+	{
+		Real64 const nu_air(15.66e-6);
+		Real64 const Pr_air(0.71);
+		Real64 Re;	// Reynolds number
+		Real64 Gr_soil;	// Grashof number
+		Real64 Pr;	// Prandtl number
+		Real64 Tavg;	// Average air temperature within the plant canopy
+		Real64 Beta;	// Volumetric thermal expansion coefficient (assuming ideal gas)
+		Real64 L_cha;	// Characteristic length based on the green roof dimensions
+		Real64 Nu;	// Nusselt number
+		Real64 length;
+		Real64 wide;
+		Real64 Norm;
+		Real64 Lmixed;
+		Real64 hConv_bare;
+
+		length = std::sqrt(Surface(SurfNum).Area);
+		wide = length;
+		Tavg = 0.50*(Tair_k + BareSoil_temp);
+		Beta = 1.00 / Tavg;
+		L_cha = length*wide / (2 * length + 2 * wide);
+
+		Gr_soil = std::abs(9.810*Beta*(BareSoil_temp - Tair_k)*std::pow(L_cha, 3) / std::pow(nu_air, 2));
+		Re = WindSpeed*length / nu_air;
+
+		// Forced convection
+		if (Gr_soil < 0.0680*std::pow(Re, 2.2)) {
+			Nu = 3.00 + 1.250*0.02530*std::pow(Re, 0.80);
+			hConv_bare = 2.10*Nu*k_air1 / length;
+		}
+
+		// Mixed convection
+		if (Gr_soil > 0.0680*std::pow(Re, 2.20) && Gr_soil < 55.30*std::pow(Re, (5.0 / 3.0))) {
+			Nu = 2.70*std::pow((Gr_soil / std::pow(Re, 2.20)), (1.0 / 3.0))*(3.0*15.0 / 4.0 + 0.02530*15.0 / 16.0*std::pow(Re, 0.80));
+			Norm = (Gr_soil / std::pow(Re, (5.0 / 3.0))) / 60.0;
+			Lmixed = (L_cha*Norm + length*(1.0 - Norm));
+			hConv_bare = 2.10*Nu*k_air1 / Lmixed;
+		}
+
+		// Natural convection
+		if (Gr_soil > 55.30*std::pow(Re, (5.0 / 3.0))) {
+			Nu = 0.150*std::pow((Gr_soil*Pr_air), (1.0 / 3.0));
+			hConv_bare = 2.10*Nu*k_air1 / L_cha;
+		}
+
+		return hConv_bare;
+	}
+
 	void
 	CalcEcoRoof(
 		int const SurfNum, // Indicator of Surface Number for the current surface
