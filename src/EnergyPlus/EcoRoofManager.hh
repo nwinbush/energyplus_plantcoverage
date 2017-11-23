@@ -130,6 +130,29 @@ namespace EcoRoofManager {
 		Real64 const k_air1
 	);
 
+	Real64
+	e_s(
+		Real64 const Temperature
+	);
+
+	Real64
+	f_Hum(
+		Real64 const Temperature,
+		Real64 const eair
+	);
+
+	Real64 
+	f_temp(
+		Real64 const Temperature
+	);
+
+	Real64
+	gamma_s(
+		Real64 const Temperature,
+		Real64 const Cp_air,
+		Real64 const Pa
+	);
+
 } // EcoRoofManager
 
 } // EnergyPlus

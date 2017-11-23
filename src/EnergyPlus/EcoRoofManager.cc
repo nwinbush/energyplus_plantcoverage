@@ -535,7 +535,7 @@ namespace EcoRoofManager {
 					Q_IR_exch_p = (1.0 - tau_lw)*Sigma*epsilonp*epsilong*(std::pow(T_soil, 4) - std::pow(Tp_old, 4)) / EpsilonOne;
 					Qconv_p = LAI*h_conv(SurfNum, Tak, Tp_old, WS, k_air)*(Tp_old - Tak);
 					r_a = Rhoa*Cp_air*std::pow((Le_num), (2.0 / 3.0)) / h_conv(SurfNum, Tak, Tp_old, WS, k_air);  // Aerodynamic resistance to mass transfer, s / m
-					r_s = (StomatalResistanceMin / LAI)*f_solar*f_hum(Tp_old, eair)*f_VWC*f_temp(Tp_old);
+					r_s = (StomatalResistanceMin / LAI)*f_solar*f_Hum(Tp_old, eair)*f_VWC*f_temp(Tp_old);
 					Q_ET_p = (LAI*Rhoa*Cp_air / gamma_s(T_soil, Cp_air, Pa))*(e_s(Tp_old) - eair) / (r_s + r_a);
 
 
@@ -857,12 +857,12 @@ namespace EcoRoofManager {
 	}
 
 	Real64
-		h_conv(
-			int const SurfNum, // Indicator of Surface number for the current surface
-			Real64 const Tair_k, // Air temperature
-			Real64 const plant_temp, // Plant temperature
-			Real64 const WindSpeed, // Wind speed
-			Real64 const k_air1 // 
+	h_conv(
+		int const SurfNum, // Indicator of Surface number for the current surface
+		Real64 const Tair_k, // Air temperature
+		Real64 const plant_temp, // Plant temperature
+		Real64 const WindSpeed, // Wind speed
+		Real64 const k_air1 // 
 	){
 		// This function returns the convective heat transfer coefficient for plants
 
@@ -971,6 +971,82 @@ namespace EcoRoofManager {
 
 		return hConv_bare;
 	}
+
+	// This function calculates the saturation vapor pressure(kPa)
+	Real64
+	e_s(
+		Real64 const Temperature
+	)
+	{
+
+		Real64 e_sVar;
+
+		e_sVar = 0.61080 * std::exp((17.270 * (Temperature - KelvinConv)) / ((Temperature - KelvinConv) + 237.30));
+
+		return e_sVar;
+	}
+
+	// f_VPD
+	Real64
+	f_Hum(
+		Real64 const Temperature,
+		Real64 const eair
+	)
+	{
+		Real64 VPD_plants;
+		Real64 f_VPD;
+		Real64 f_humVar;
+
+		VPD_plants = e_s(Temperature) - eair;
+		if (VPD_plants > 0.00) {
+			f_VPD = 1.00 - 0.410*std::log(VPD_plants);
+		}else {
+			f_VPD = 1.00;
+		}
+		if (f_VPD > 1.00) {
+			f_VPD = 1.00;
+		}
+		if (f_VPD < 0.00) {
+			f_VPD = 0.050;
+		}
+
+		f_humVar = 1.00 / f_VPD;
+		
+		return f_humVar;
+	}
+
+	// f_temp
+	Real64 
+	f_temp(
+		Real64 const Temperature
+	)
+	{
+		Real64 f_tempVar;
+
+		f_tempVar = std::abs(1.0 / (1.0 - 0.00160*std::pow((35.0 - (Temperature - KelvinConv)), 2)));
+		return f_tempVar;
+	}
+
+	// Gamma: Psychrometric constant
+	Real64
+	gamma_s(
+
+		Real64 const Temperature,
+		Real64 const Cp_air,
+		Real64 const Pa
+	)
+	{
+		Real64 i_fg;
+		Real64 gamma_sVar;
+		
+		i_fg = (-2.37930*(Temperature - KelvinConv) + 2501.10)*1000.0;  //Latent heat of vaporization(j / kg); 1000 is
+																		//for converting kj to j.
+		gamma_sVar = Cp_air*(Pa / 1000.0) / (0.6220*i_fg);
+
+		return gamma_sVar;
+	}
+
+
 
 	void
 	CalcEcoRoof(
